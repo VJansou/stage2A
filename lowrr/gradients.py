@@ -1,1 +1,1 @@
-# Fonctions pour calculer les gradients
+# Fonctions pour calculer les gradients (utile pour la sélection de points épars)
