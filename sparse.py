@@ -1,0 +1,1 @@
+# Sélection de points épars de manière grossière à fine.

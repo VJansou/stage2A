@@ -1,0 +1,1 @@
+# Fonctions pour calculer les gradients

@@ -1,0 +1,1 @@
+# Fonctions pour générer des images multirésolution
