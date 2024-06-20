@@ -10,3 +10,5 @@ RHO = 0.1 # Paramètre rho
 
 TRESHOLD = 1e-3 # Seuil de convergence
 MAX_ITER = 40 # Nombre d'itérations maximum
+
+DEBUG = True # Mode debug
