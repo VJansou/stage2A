@@ -1,11 +1,13 @@
 import cv2
 import os
 import numpy as np
+import scipy.linalg
 
 from consts import *
 import multires
 import gradients
 import interpolation
+import affine2d
 
 # Charge les images d'un répertoire
 def load_images(directory):
@@ -17,6 +19,11 @@ def load_images(directory):
         else:
             print("Erreur: n'a pas trouvé l'image", filename)
     return images
+
+# Sauvegarde les images dans un répertoire
+def store_images(images, directory):
+    for i, img in enumerate(images):
+        cv2.imwrite(os.path.join(directory, f"image_{i}.png"), img)
 
 # Réduit les valeurs vers 0
 def shrink(x, tau):
@@ -36,7 +43,9 @@ def forwards_compositional_step(shape, coordinates, residuals, gradient):
     border = int(0.04 * min(height, width))
     pixel_count_inside = 0
 
-    for (((x, y), res), (gx, gy)) in zip(coordinates, residuals, gradient):
+    for (coord, res, grad) in zip(coordinates, residuals, gradient):
+        x, y = coord
+        gx, gy = grad
         # Vérifie si le pixel est dans la région d'intérêt
         if x > border and x < width - border and y > border and y < height - border:
             pixel_count_inside += 1
@@ -48,29 +57,51 @@ def forwards_compositional_step(shape, coordinates, residuals, gradient):
             # Calcul de la descente
             descent_params += res * jacobian
     if pixel_count_inside < 6:
-        raise ValueError("Pas assez de pixels dans la région d'intérêt")
-    hessian_chol = np.linalg.cho_factor(hessian)
-    return np.linalg.cho_solve(hessian_chol, descent_params)
-
-# Crée une matrice de projection à partir des paramètres de mouvement
-def projection_mat(params):
-    return np.array([[1 + params[0], params[1], params[2]],
-                     [params[3], 1 + params[4], params[5]],
-                     [0, 0, 1]])
-
-# Crée un vecteur de paramètres de mouvement à partir d'une matrice de projection
-def projection_params(mat):
-    return np.array([mat[0,0] - 1, mat[0,1], mat[0,2], mat[1,0], mat[1,1] - 1, mat[1,2]])
+        raise ValueError(f"Pas assez de pixels dans la région d'intérêt : {pixel_count_inside} trouvés")
+    hessian_chol = scipy.linalg.cho_factor(hessian)
+    return scipy.linalg.cho_solve(hessian_chol, descent_params)
 
 # Projette les coordonnées des pixels sur l'image
 def project(coordinates, registered, imgs, motion_vector):
     for (i, motion) in enumerate(motion_vector):
-        motion_mat = projection_mat(motion)
+        motion_mat = affine2d.projection_mat(motion)
         registered_col = registered[:,i]
         for (x, y), pixel in zip(coordinates, range(len(registered_col))):
             new_pos = np.dot(motion_mat, np.array([x, y, 1.0]))
             interp = interpolation.linear(new_pos[0], new_pos[1], imgs[i])
             registered_col[pixel] = interp
+
+# Reprojette les images en fonction du vecteur de mouvement
+def reproject(imgs, motion_vector):
+    reproject_imgs = []
+    for i, img in enumerate(imgs):
+        reproject_imgs.append(wrap(img, motion_vector[i]))
+    return reproject_imgs
+
+# Applique une transformation affine à une image
+def wrap(img, motion_params):
+    # Obtenir les dimensions de l'image
+    if img.ndim == 2:  # Image en niveaux de gris
+        rows, cols = img.shape
+        channels = 1
+    elif img.ndim == 3:  # Image en couleur
+        rows, cols, channels = img.shape
+    else:
+        raise ValueError("L'image doit être 2D (niveaux de gris) ou 3D (couleur)")
+
+    motion_mat = affine2d.projection_mat(motion_params)
+    wrapped = np.zeros_like(img)
+    for x in range(cols):
+        for y in range(rows):
+            new_pos = np.dot(motion_mat, np.array([x, y, 1.0]))
+            # Appliquer l'interpolation pour chaque canal
+            for c in range(channels):
+                if channels == 1:
+                    wrapped[y, x] = interpolation.linear(new_pos[0], new_pos[1], img)
+                else:
+                    wrapped[y, x, c] = interpolation.linear(new_pos[0], new_pos[1], img[:, :, c])
+    return wrapped
+
 
 # Fonction principale
 def main():
@@ -84,15 +115,15 @@ def main():
         cv2.destroyAllWindows()
 
     # Convertit les images en niveaux de gris
-    dataset = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in dataset]
+    dataset_gray = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in dataset]
     if DEBUG:
         # Affiche la première image
-        cv2.imshow("Premiere image en niveau de gris", dataset[0])
+        cv2.imshow("Premiere image en niveau de gris", dataset_gray[0])
         cv2.waitKey(0)
         cv2.destroyAllWindows()
 
     # Génère les images multirésolution
-    image_pyramid = multires.run(dataset, LEVELS)
+    image_pyramid = multires.run(dataset_gray, LEVELS)
     if DEBUG:
         # Affiche les dimensions de la première image à chaque niveau
         for level, images_at_level in enumerate(image_pyramid):
@@ -103,6 +134,9 @@ def main():
     # Initialisation du vecteur de mouvement
     motion_vector = np.zeros([nb_images,6])
 
+    # Calcul du sous-ensemble de pixels à utiliser
+    
+
     # Algorithme multi-résolution.
     # Effectue la même opération à chaque niveau pour les images et gradients correspondants.
     # L'itérateur est inversé pour commencer par le dernier niveau (la résolution la plus basse).
@@ -110,6 +144,8 @@ def main():
     image_pyramid_inv = image_pyramid[::-1]
 
     for level, images_at_level in enumerate(image_pyramid_inv):
+        if DEBUG:
+            print(f"Calcul au niveau {level}")
         (rows, cols) = images_at_level[0].shape
 
         # Adaptation du vecteur de mouvement au changement de résolution
@@ -118,7 +154,7 @@ def main():
 
         # Variables d'état pour la boucle
         nb_iter = 0
-        coordinates = coords_col_major((rows, cols))
+        coordinates = list(coords_col_major((rows, cols)))
         imgs_registered = np.zeros([rows*cols, nb_images])
         project(coordinates, imgs_registered, images_at_level, motion_vector)
         old_imgs_a = np.zeros([rows*cols, nb_images])
@@ -127,6 +163,8 @@ def main():
         # Boucle principale
         continue_loop = True
         while continue_loop:
+            if DEBUG:
+                print(f"Iteration {nb_iter} au niveau {level}")
             # Pre-scale lambda
             lambda_value = LAMBDA/np.sqrt(rows)
 
@@ -150,15 +188,15 @@ def main():
                 gradient = gradients.centered(imgs_registered[:,i].reshape([rows,cols]))
 
                 # Calcul residuals et vecteur de mouvement pour l'image i
-                step_params = forwards_compositional_step((rows,cols), coordinates, residuals, gradient)
+                step_params = forwards_compositional_step((rows,cols), coordinates, residuals[:,i], gradient.reshape(-1, 2))
 
                 # Mise à jour de la matrice de mouvement
-                motion_vector[i] = projection_params(projection_mat(motion_vector[i]) * projection_mat(step_params))
+                motion_vector[i] = affine2d.projection_params(affine2d.projection_mat(motion_vector[i]) * affine2d.projection_mat(step_params))
 
                 # Transformation des paramètres de mouvement pour que la première image soit la référence
-                inverse_motion_ref = np.linalg.inv(projection_mat(motion_vector[0]))
+                inverse_motion_ref = np.linalg.inv(affine2d.projection_mat(motion_vector[0]))
                 for i in range(1,nb_images):
-                    motion_vector[i] = projection_params(np.dot(inverse_motion_ref, projection_mat(motion_vector[i])))
+                    motion_vector[i] = affine2d.projection_params(np.dot(inverse_motion_ref, affine2d.projection_mat(motion_vector[i])))
 
                 # Mise à jour de imgs_registered
                 project(coordinates, imgs_registered, images_at_level, motion_vector)
@@ -167,7 +205,7 @@ def main():
                 lagrange_mult_rho += imgs_registered - imgs_a + errors
 
                 # Test de convergence
-                residual = np.linalg.norm(imgs_a - old_imgs_a) / 1e-12.max(np.linalg.norm(old_imgs_a)) # TODO comprendre d'où vient 1e-12
+                residual = np.linalg.norm(imgs_a - old_imgs_a) / max(1e-12, np.linalg.norm(old_imgs_a))
                 continue_loop = residual > TRESHOLD and nb_iter < MAX_ITER
 
                 # Mise à jour des variables d'état
@@ -177,6 +215,19 @@ def main():
     # Affiche le vecteur de mouvement final
     print("Vecteur de mouvement final:")
     print(motion_vector)
+    print(np.round(motion_vector, 4))
+
+    # Sauvegarde des images
+    if SAVE_IMAGES:
+        # Projection des images en fonction du vecteur de mouvement
+        print("Reprojection des images...")
+        registered_imgs = reproject(dataset, motion_vector)
+
+        # Création du répertoire de sortie
+        print("Sauvegarde des images...")
+        if not os.path.exists(OUT_DIR):
+            os.makedirs(OUT_DIR)
+        store_images(registered_imgs, OUT_DIR)
         
 
 
