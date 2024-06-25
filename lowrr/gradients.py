@@ -40,7 +40,7 @@ def squared_norm_direct(img):
     (rows, cols) = img.shape
     if rows < 3 or cols < 3:
         raise ValueError("L'image doit avoir au moins 3 pixels dans chaque direction")
-   
+
     top = img[0:-2, 1:-1]
     bottom = img[2:, 1:-1]
     left = img[1:-1, 0:-2]

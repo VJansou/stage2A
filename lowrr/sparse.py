@@ -2,6 +2,9 @@
 # Utile pour accélérer les algorithmes de registration.
 
 import numpy as np
+import matplotlib.pyplot as plt
+import cv2
+from math import ceil
 
 # Sélectionne un sous-ensemble de points satisfaisant deux conditions :
 #   * les points doivent être bien répartis dans l'image.
@@ -12,15 +15,19 @@ import numpy as np
 
 def select(diff_threshold, gradients):
     (rows, cols) = gradients[-1].shape
+    # print(f"rows: {rows}, cols: {cols}")
+    # for level in gradients:
+    #     print(f"level shape: {level.shape}")
     init_sparse = np.full((rows, cols), True, dtype=bool)
     prune = lambda a, b, c, d: prune_with_thresh(diff_threshold, a, b, c, d)
-
+    multires_mask = []
+    multires_mask.append(init_sparse)
     # On commence par la résolution la plus basse
     # On saute la première résolution car tout les points sont bons
-    for grad_mat in reversed(gradients[1:]):
-        new_mask = select_2x2_bloc(init_sparse[-1], grad_mat, prune)
-        init_sparse.append(new_mask)
-    return init_sparse
+    for grad_mat in reversed(gradients[:-1]):
+        new_mask = select_2x2_bloc(multires_mask[-1], grad_mat, prune)
+        multires_mask.append(new_mask)
+    return multires_mask[::-1]
 
 
 # Applique une fonction prédicat sur chaque bloc 2x2 de mat
@@ -28,7 +35,7 @@ def select(diff_threshold, gradients):
 def select_2x2_bloc(pre_mask, mat, f):
     (rows, cols) = mat.shape
     (rows2, cols2) = pre_mask.shape
-    assert rows == rows2 * 2 and cols == cols2 * 2
+    assert ceil(rows / 2) == rows2 and ceil(cols / 2) == cols2, f"Assertion failed: rows / 2 ({ceil(rows / 2)}) != rows2 ({rows2}) or cols / 2 ({ceil(cols / 2)}) != cols2 ({cols2})"
     mask = np.zeros((rows, cols), dtype=bool)
     for j in range(cols2):
         for i in range(rows2):
@@ -67,3 +74,29 @@ def prune_with_thresh(tresh, a, b, c, d):
 print(prune_with_thresh(5, 0, 1, 8, 9)) # [False, False, True, True]
 print(prune_with_thresh(5, 0, 9, 1, 8)) # [False, True, False, True]
 print(prune_with_thresh(5, 1, 0, 9, 0)) # [False, False, True, False]
+
+# Pour tester select
+def show_first_image(image_pyramid, multires_sparse_pixels):
+
+    # Extraire la première image et son masque à chaque niveau de la pyramide
+    images_to_show = [level[0] for level in image_pyramid]
+    masks_to_show = [level[0] for level in multires_sparse_pixels]
+
+    # Déterminer le nombre de niveaux
+    num_levels = len(images_to_show)
+
+    # Créer une figure avec une sous-figure pour chaque niveau
+    plt.figure(figsize=(15, 5))
+    for i, (img, mask) in enumerate(zip(images_to_show, masks_to_show)):
+        plt.subplot(1, num_levels, i + 1)
+        # Convertir l'image en RGB si elle est en BGR (OpenCV charge en BGR)
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        plt.imshow(img_rgb)
+        plt.imshow(mask, cmap='hot', alpha=0.5)
+        plt.title(f"Résolution niveau {i}")
+        plt.axis('off')
+    plt.tight_layout()
+    plt.show()
+
+        
+

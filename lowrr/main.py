@@ -8,6 +8,7 @@ import multires
 import gradients
 import interpolation
 import affine2d
+import sparse
 
 # Charge les images d'un répertoire
 def load_images(directory):
@@ -123,27 +124,50 @@ def main():
         cv2.destroyAllWindows()
 
     # Génère les images multirésolution
-    image_pyramid = multires.run(dataset_gray, LEVELS)
+    image_pyramid, LEVELS = multires.mean_pyramid(MAX_LEVELS, dataset_gray)
     if DEBUG:
         # Affiche les dimensions de la première image à chaque niveau
         for level, images_at_level in enumerate(image_pyramid):
             print(f"Niveau {level}:")
             print(f"  Image 0: Dimensions {images_at_level[0].shape}")
         multires.show_first_image(image_pyramid)
+
+    # Choisit un sous-ensemble de pixels à utiliser
+    multires_sparse_pixels = [[None for _ in range(nb_images)] for _ in range(LEVELS)]
+    gradients_pyramid = [[None for _ in range(nb_images)] for _ in range(LEVELS)]
+    for level, images_at_level in enumerate(image_pyramid):
+        gradients_pyramid[level] = [gradients.squared_norm_direct(img) for img in images_at_level]
+    for i in range(nb_images):
+        grad_i = []
+        for level in range(LEVELS):
+            grad_i.append(gradients_pyramid[level][i])
+            # if DEBUG:
+            #     print(f"rows : {grad_i[level].shape[0]} cols : {grad_i[level].shape[1]}")
+        multires_mask = sparse.select(SPARSE_RATIO_THRESHOLD, grad_i)
+        for level in range(LEVELS):
+            multires_sparse_pixels[level][i] = multires_mask[level]
+    
+    if DEBUG:
+        # Affiche le masque de sparsité pour la première image
+        for level, mask_at_level in enumerate(multires_sparse_pixels):
+            print(f"Niveau {level}:")
+            print(f"  Image 0: {np.sum(mask_at_level[0])} pixels")
+        sparse.show_first_image(image_pyramid, multires_sparse_pixels)
     
     # Initialisation du vecteur de mouvement
     motion_vector = np.zeros([nb_images,6])
 
     # Calcul du sous-ensemble de pixels à utiliser
-    
+
 
     # Algorithme multi-résolution.
     # Effectue la même opération à chaque niveau pour les images et gradients correspondants.
     # L'itérateur est inversé pour commencer par le dernier niveau (la résolution la plus basse).
     # Le niveau 0 correspond aux images initiales.
     image_pyramid_inv = image_pyramid[::-1]
+    multires_sparse_pixels_inv = multires_sparse_pixels[::-1]
 
-    for level, images_at_level in enumerate(image_pyramid_inv):
+    for (level, (images_at_level, lvl_sparse_pixels)) in enumerate(zip(image_pyramid_inv, multires_sparse_pixels_inv)):
         if DEBUG:
             print(f"Calcul au niveau {level}")
         (rows, cols) = images_at_level[0].shape
@@ -151,6 +175,13 @@ def main():
         # Adaptation du vecteur de mouvement au changement de résolution
         motion_vector[:,4] *= 2
         motion_vector[:,5] *= 2
+
+        # Filtre de sparsité
+        pixels_count = rows * cols
+        sparse_count = np.sum(lvl_sparse_pixels)
+        sparse_ratio = sparse_count / pixels_count
+        if DEBUG:
+            print(f"Ratio de sparsité: {sparse_ratio}")
 
         # Variables d'état pour la boucle
         nb_iter = 0
