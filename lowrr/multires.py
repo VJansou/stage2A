@@ -97,7 +97,7 @@ def show_first_image(image_pyramid):
     num_levels = len(images_to_show)
 
     # Créer une figure avec une sous-figure pour chaque niveau
-    plt.figure(figsize=(15, 5))
+    plt.figure()
     for i, img in enumerate(images_to_show):
         plt.subplot(1, num_levels, i + 1)
         # Convertir l'image en RGB si elle est en BGR (OpenCV charge en BGR)

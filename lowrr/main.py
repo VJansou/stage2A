@@ -9,6 +9,7 @@ import gradients
 import interpolation
 import affine2d
 import sparse
+import utils
 
 # Charge les images d'un répertoire
 def load_images(directory):
@@ -30,10 +31,6 @@ def store_images(images, directory):
 def shrink(x, tau):
     return np.sign(x) * np.maximum(np.abs(x) - tau, 0)
 
-# Donne un itérateur pour les coordonnées en colonne
-def coords_col_major(shape):
-    (rows, cols) = shape
-    return ((x, y) for x in range(cols) for y in range(rows))
 
 # Calcule le pas de Gauss-Newton
 def forwards_compositional_step(shape, coordinates, residuals, gradient):
@@ -157,14 +154,16 @@ def main():
     # Initialisation du vecteur de mouvement
     motion_vector = np.zeros([nb_images,6])
 
-    # Calcul du sous-ensemble de pixels à utiliser
-
-
     # Algorithme multi-résolution.
     # Effectue la même opération à chaque niveau pour les images et gradients correspondants.
     # L'itérateur est inversé pour commencer par le dernier niveau (la résolution la plus basse).
     # Le niveau 0 correspond aux images initiales.
     image_pyramid_inv = image_pyramid[::-1]
+
+    # On ne garde que le résultat de la première image
+    multires_sparse_pixels = [multires_sparse_pixels[level][0] for level in range(LEVELS)]
+    if DEBUG:
+        print("Taille de multires_sparse_pixels : ", len(multires_sparse_pixels))
     multires_sparse_pixels_inv = multires_sparse_pixels[::-1]
 
     for (level, (images_at_level, lvl_sparse_pixels)) in enumerate(zip(image_pyramid_inv, multires_sparse_pixels_inv)):
@@ -178,19 +177,27 @@ def main():
 
         # Filtre de sparsité
         pixels_count = rows * cols
-        sparse_count = np.sum(lvl_sparse_pixels)
+        sparse_count = sum(1 if x else 0 for x in np.array(lvl_sparse_pixels).flatten())
         sparse_ratio = sparse_count / pixels_count
-        if DEBUG:
-            print(f"Ratio de sparsité: {sparse_ratio}")
+        if sparse_ratio > SPARSE_RATIO_THRESHOLD:
+            print(f"Ratio de sparsité = {sparse_ratio} > {SPARSE_RATIO_THRESHOLD} : on utilise une résolution dense")
+            sparsity = sparse.Sparsity.Full
+            actual_pixel_count = pixels_count
+            pixel_coordinates = utils.coords_col_major((rows, cols))
+        else:
+            print(f"Ratio de sparsité = {sparse_ratio} <= {SPARSE_RATIO_THRESHOLD} : on utilise une résolution sparse")
+            sparsity = sparse.Sparsity.Sparse
+            actual_pixel_count = sparse_count
+            pixel_coordinates = utils.coordinates_from_mask(lvl_sparse_pixels)
 
         # Variables d'état pour la boucle
         nb_iter = 0
-        coordinates = list(coords_col_major((rows, cols)))
-        imgs_registered = np.zeros([rows*cols, nb_images])
+        coordinates = list(pixel_coordinates)
+        imgs_registered = np.zeros([actual_pixel_count, nb_images])
         project(coordinates, imgs_registered, images_at_level, motion_vector)
-        old_imgs_a = np.zeros([rows*cols, nb_images])
-        errors = np.zeros([rows*cols, nb_images])
-        lagrange_mult_rho = np.zeros([rows*cols, nb_images])
+        old_imgs_a = np.zeros([actual_pixel_count, nb_images])
+        errors = np.zeros([actual_pixel_count, nb_images])
+        lagrange_mult_rho = np.zeros([actual_pixel_count, nb_images])
         # Boucle principale
         continue_loop = True
         while continue_loop:
@@ -208,7 +215,7 @@ def main():
 
             # mise à jour de e : L1-regularized least-squares
             errors_temp = imgs_a - imgs_registered - lagrange_mult_rho
-            for i in range(rows*cols):
+            for i in range(actual_pixel_count):
                 for j in range(nb_images):
                     errors[i,j] = shrink(errors_temp[i,j], lambda_value/RHO)
 
@@ -216,7 +223,11 @@ def main():
             residuals = errors_temp - errors
             for i in range(nb_images):
                 # Calcul du gradient de l'image i
-                gradient = gradients.centered(imgs_registered[:,i].reshape([rows,cols]))
+                match sparsity:
+                    case sparse.Sparsity.Full:
+                        gradient = gradients.compute_registered_gradients_full((rows,cols), imgs_registered[:,i])
+                    case sparse.Sparsity.Sparse:
+                        gradient = gradients.compute_registered_gradients_sparse(images_at_level[i], affine2d.projection_mat(motion_vector[i]), coordinates)
 
                 # Calcul residuals et vecteur de mouvement pour l'image i
                 step_params = forwards_compositional_step((rows,cols), coordinates, residuals[:,i], gradient.reshape(-1, 2))

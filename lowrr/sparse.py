@@ -5,6 +5,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 from math import ceil
+from enum import Enum
+
+class Sparsity(Enum):
+    Full = 0
+    Sparse = 1
 
 # Sélectionne un sous-ensemble de points satisfaisant deux conditions :
 #   * les points doivent être bien répartis dans l'image.
@@ -12,7 +17,6 @@ from math import ceil
 
 # Chaque niveau est conservé, mais le plus important
 # est celui à la plus haute résolution (le dernier).
-
 def select(diff_threshold, gradients):
     (rows, cols) = gradients[-1].shape
     # print(f"rows: {rows}, cols: {cols}")
@@ -70,11 +74,18 @@ def prune_with_thresh(tresh, a, b, c, d):
     result[l.index(first)] = True
     return result
 
+# Extrait les valeurs des pixels épars
+def extract(sparse_pixels, mat):
+    for b, v in zip(np.array(sparse_pixels).flatten(), mat):
+        if b:
+            yield v
+
 # Tests
 print(prune_with_thresh(5, 0, 1, 8, 9)) # [False, False, True, True]
 print(prune_with_thresh(5, 0, 9, 1, 8)) # [False, True, False, True]
 print(prune_with_thresh(5, 1, 0, 9, 0)) # [False, False, True, False]
 
+print(list(extract([True, False, True, False], [1, 2, 3, 4]))) # [1, 3]
 # Pour tester select
 def show_first_image(image_pyramid, multires_sparse_pixels):
 
@@ -86,7 +97,7 @@ def show_first_image(image_pyramid, multires_sparse_pixels):
     num_levels = len(images_to_show)
 
     # Créer une figure avec une sous-figure pour chaque niveau
-    plt.figure(figsize=(15, 5))
+    plt.figure()
     for i, (img, mask) in enumerate(zip(images_to_show, masks_to_show)):
         plt.subplot(1, num_levels, i + 1)
         # Convertir l'image en RGB si elle est en BGR (OpenCV charge en BGR)
