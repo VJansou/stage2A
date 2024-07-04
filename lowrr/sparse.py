@@ -4,7 +4,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
-from math import ceil
+from math import floor
 from enum import Enum
 
 class Sparsity(Enum):
@@ -39,7 +39,7 @@ def select(diff_threshold, gradients):
 def select_2x2_bloc(pre_mask, mat, f):
     (rows, cols) = mat.shape
     (rows2, cols2) = pre_mask.shape
-    assert ceil(rows / 2) == rows2 and ceil(cols / 2) == cols2, f"Assertion failed: rows / 2 ({ceil(rows / 2)}) != rows2 ({rows2}) or cols / 2 ({ceil(cols / 2)}) != cols2 ({cols2})"
+    assert (floor(rows / 2) == rows2) and floor(cols / 2) == cols2, f"Assertion failed: rows / 2 ({floor(rows / 2)}) != rows2 ({rows2}) or cols / 2 ({floor(cols / 2)}) != cols2 ({cols2})"
     mask = np.zeros((rows, cols), dtype=bool)
     for j in range(cols2):
         for i in range(rows2):
@@ -80,12 +80,13 @@ def extract(sparse_pixels, mat):
         if b:
             yield v
 
-# Tests
-print(prune_with_thresh(5, 0, 1, 8, 9)) # [False, False, True, True]
-print(prune_with_thresh(5, 0, 9, 1, 8)) # [False, True, False, True]
-print(prune_with_thresh(5, 1, 0, 9, 0)) # [False, False, True, False]
+# # Tests
+# print(prune_with_thresh(5, 0, 1, 8, 9)) # [False, False, True, True]
+# print(prune_with_thresh(5, 0, 9, 1, 8)) # [False, True, False, True]
+# print(prune_with_thresh(5, 1, 0, 9, 0)) # [False, False, True, False]
 
-print(list(extract([True, False, True, False], [1, 2, 3, 4]))) # [1, 3]
+# print(list(extract([True, False, True, False], [1, 2, 3, 4]))) # [1, 3]
+
 # Pour tester select
 def show_first_image(image_pyramid, multires_sparse_pixels):
 

@@ -49,7 +49,7 @@ def forwards_compositional_step(shape, coordinates, residuals, gradient):
             pixel_count_inside += 1
 
             # Calcul de l'approximation de Gauss-Newton
-            jacobian = np.array([x*gx, x*gy, y*gx, y*gy, gx, gy])
+            jacobian = np.array([x * gx, x * gy, y * gx, y * gy, gx, gy])
             hessian += np.outer(jacobian, jacobian)
 
             # Calcul de la descente
@@ -63,11 +63,10 @@ def forwards_compositional_step(shape, coordinates, residuals, gradient):
 def project(coordinates, registered, imgs, motion_vector):
     for (i, motion) in enumerate(motion_vector):
         motion_mat = affine2d.projection_mat(motion)
-        registered_col = registered[:,i]
-        for (x, y), pixel in zip(coordinates, range(len(registered_col))):
+        for (x, y), pixel in zip(coordinates, range(len(registered[:,i]))):
             new_pos = np.dot(motion_mat, np.array([x, y, 1.0]))
             interp = interpolation.linear(new_pos[0], new_pos[1], imgs[i])
-            registered_col[pixel] = interp
+            registered[:,i][pixel] = interp
 
 # Reprojette les images en fonction du vecteur de mouvement
 def reproject(imgs, motion_vector):
@@ -124,16 +123,17 @@ def main():
     image_pyramid, LEVELS = multires.mean_pyramid(MAX_LEVELS, dataset_gray)
     if DEBUG:
         # Affiche les dimensions de la première image à chaque niveau
-        for level, images_at_level in enumerate(image_pyramid):
+        for level, lvl_imgs in enumerate(image_pyramid):
             print(f"Niveau {level}:")
-            print(f"  Image 0: Dimensions {images_at_level[0].shape}")
+            print(f"  Image 0: --> Dimensions {lvl_imgs[0].shape}")
+            print(f"           --> Type {lvl_imgs[1].dtype}")
         multires.show_first_image(image_pyramid)
 
     # Choisit un sous-ensemble de pixels à utiliser
     multires_sparse_pixels = [[None for _ in range(nb_images)] for _ in range(LEVELS)]
     gradients_pyramid = [[None for _ in range(nb_images)] for _ in range(LEVELS)]
-    for level, images_at_level in enumerate(image_pyramid):
-        gradients_pyramid[level] = [gradients.squared_norm_direct(img) for img in images_at_level]
+    for level, lvl_imgs in enumerate(image_pyramid):
+        gradients_pyramid[level] = [gradients.squared_norm_direct(img) for img in lvl_imgs]
     for i in range(nb_images):
         grad_i = []
         for level in range(LEVELS):
@@ -147,7 +147,7 @@ def main():
     if DEBUG:
         # Affiche le masque de sparsité pour la première image
         for level, mask_at_level in enumerate(multires_sparse_pixels):
-            print(f"Niveau {level}:")
+            print(f"Niveau {LEVELS - level}:")
             print(f"  Image 0: {np.sum(mask_at_level[0])} pixels")
         sparse.show_first_image(image_pyramid, multires_sparse_pixels)
     
@@ -166,10 +166,10 @@ def main():
         print("Taille de multires_sparse_pixels : ", len(multires_sparse_pixels))
     multires_sparse_pixels_inv = multires_sparse_pixels[::-1]
 
-    for (level, (images_at_level, lvl_sparse_pixels)) in enumerate(zip(image_pyramid_inv, multires_sparse_pixels_inv)):
+    for (level, (lvl_imgs, lvl_sparse_pixels)) in enumerate(zip(image_pyramid_inv, multires_sparse_pixels_inv)):
         if DEBUG:
-            print(f"Calcul au niveau {level}")
-        (rows, cols) = images_at_level[0].shape
+            print(f"====================== Calcul au niveau {LEVELS - level} ======================")
+        (rows, cols) = lvl_imgs[0].shape
 
         # Adaptation du vecteur de mouvement au changement de résolution
         motion_vector[:,4] *= 2
@@ -193,8 +193,8 @@ def main():
         # Variables d'état pour la boucle
         nb_iter = 0
         coordinates = list(pixel_coordinates)
-        imgs_registered = np.zeros([actual_pixel_count, nb_images])
-        project(coordinates, imgs_registered, images_at_level, motion_vector)
+        imgs_registered = np.zeros([actual_pixel_count, nb_images], dtype=np.float32)
+        project(coordinates, imgs_registered, lvl_imgs, motion_vector)
         old_imgs_a = np.zeros([actual_pixel_count, nb_images])
         errors = np.zeros([actual_pixel_count, nb_images])
         lagrange_mult_rho = np.zeros([actual_pixel_count, nb_images])
@@ -202,16 +202,22 @@ def main():
         continue_loop = True
         while continue_loop:
             if DEBUG:
-                print(f"Iteration {nb_iter} au niveau {level}")
+                print(f"Iteration {nb_iter} au niveau {LEVELS - level}")
             # Pre-scale lambda
-            lambda_value = LAMBDA/np.sqrt(rows)
+            lambda_value = LAMBDA/np.sqrt(nb_images)
 
-            # mise à jour de A avec l'approximation de faible rang
+            # mise à jour de A : low-rank approximation
             imgs_a = imgs_registered + errors + lagrange_mult_rho
             (U,S,V) = np.linalg.svd(imgs_a, full_matrices=False)
+            if DEBUG:
+                print(f"  SVD avant shrink: {S}")
             for i in range(S.shape[0]):
                 S[i] = shrink(S[i], 1/RHO)
+            if DEBUG:
+                print(f"  SVD après shrink: {S}")
             imgs_a = np.dot(U, np.dot(np.diag(S), V))
+            if DEBUG:
+                print(f"  imgs_a: {imgs_a}")
 
             # mise à jour de e : L1-regularized least-squares
             errors_temp = imgs_a - imgs_registered - lagrange_mult_rho
@@ -227,42 +233,67 @@ def main():
                     case sparse.Sparsity.Full:
                         gradient = gradients.compute_registered_gradients_full((rows,cols), imgs_registered[:,i])
                     case sparse.Sparsity.Sparse:
-                        gradient = gradients.compute_registered_gradients_sparse(images_at_level[i], affine2d.projection_mat(motion_vector[i]), coordinates)
-
+                        gradient = gradients.compute_registered_gradients_sparse(lvl_imgs[i], affine2d.projection_mat(motion_vector[i]), coordinates)
+                if DEBUG:
+                    print(f"    Gradient shape: {gradient.shape}")
+                    print(f"    Residuals shape : {len(residuals[:,i])}")
+                    print(f"    Residuals : {residuals[:20,i]}")
+                    print(f"    Coordinates shape: {len(coordinates)}")
                 # Calcul residuals et vecteur de mouvement pour l'image i
-                step_params = forwards_compositional_step((rows,cols), coordinates, residuals[:,i], gradient.reshape(-1, 2))
+                step_params = forwards_compositional_step((rows,cols), coordinates, residuals[:,i], gradient)
 
-                # Mise à jour de la matrice de mouvement
-                motion_vector[i] = affine2d.projection_params(affine2d.projection_mat(motion_vector[i]) * affine2d.projection_mat(step_params))
+                # Mise à jour de la matrice de mouvement pour l'image i
+                motion_vector[i] = affine2d.projection_params(np.dot(affine2d.projection_mat(motion_vector[i]), affine2d.projection_mat(step_params)))
 
-                # Transformation des paramètres de mouvement pour que la première image soit la référence
-                inverse_motion_ref = np.linalg.inv(affine2d.projection_mat(motion_vector[0]))
-                for i in range(1,nb_images):
-                    motion_vector[i] = affine2d.projection_params(np.dot(inverse_motion_ref, affine2d.projection_mat(motion_vector[i])))
+            # Transformation des paramètres de mouvement pour que la première image soit la référence
+            inverse_motion_ref = np.linalg.inv(affine2d.projection_mat(motion_vector[0]))
+            for i in range(1,len(motion_vector)):
+                motion_vector[i] = affine2d.projection_params(np.dot(inverse_motion_ref, affine2d.projection_mat(motion_vector[i])))
 
-                # Mise à jour de imgs_registered
-                project(coordinates, imgs_registered, images_at_level, motion_vector)
+            # Mise à jour de imgs_registered
+            project(coordinates, imgs_registered, lvl_imgs, motion_vector)
 
-                # y-update : dual ascent
-                lagrange_mult_rho += imgs_registered - imgs_a + errors
+            # y-update : dual ascent
+            lagrange_mult_rho += imgs_registered - imgs_a + errors
 
-                # Test de convergence
-                residual = np.linalg.norm(imgs_a - old_imgs_a) / max(1e-12, np.linalg.norm(old_imgs_a))
-                continue_loop = residual > TRESHOLD and nb_iter < MAX_ITER
+            # Test de convergence
+            residual = np.linalg.norm(imgs_a - old_imgs_a) / max(1e-12, np.linalg.norm(old_imgs_a))
+            continue_loop = residual > TRESHOLD and nb_iter < MAX_ITER
+            if DEBUG:
+                print(f"    Residual: {residual}")
 
-                # Mise à jour des variables d'état
-                nb_iter += 1
-                old_imgs_a = imgs_a
+            # Mise à jour des variables d'état
+            nb_iter += 1
+            old_imgs_a = imgs_a
         
     # Affiche le vecteur de mouvement final
     print("Vecteur de mouvement final:")
     print(motion_vector)
-    print(np.round(motion_vector, 4))
+    np.set_printoptions(precision=4, suppress=True)
+    print(motion_vector)
+
+    # Détection des outliers
+    if SEUIL_DETECTION > 0:
+        print("Détection des outliers...")
+        for i in range(1, nb_images):
+            for j in range(1, 6):
+                if abs(motion_vector[i, j]) > SEUIL_DETECTION:
+                    print(f"Outlier détecté: image {i}")
+                    break
+
 
     # Sauvegarde des images
     if SAVE_IMAGES:
         # Projection des images en fonction du vecteur de mouvement
         print("Reprojection des images...")
+#         vecteur = np.array([
+#     [0.00000000005820766, 0, 0, 0, 0.00000011920929, 0],
+#     [-0.00050127506, 0.0015685019, 0.00049495575, 0.0032132864, -0.04816699, -1.3059417],
+#     [0.0025134087, 0.003739301, 0.002843324, 0.008618593, -1.6157403, -4.0644226],
+#     [0.005250931, 0.0046236245, 0.003998261, 0.013577342, -2.6713383, -6.0009995],
+#     [0.005466342, 0.0010521039, 0.00390825, 0.021158695, -2.7797763, -8.336304],
+#     [-0.022756279, -0.11309741, 0.07820845, -0.0014507174, 2.6635132, 34.11573]
+# ], dtype=np.float32)
         registered_imgs = reproject(dataset, motion_vector)
 
         # Création du répertoire de sortie

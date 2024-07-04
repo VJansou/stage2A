@@ -10,7 +10,7 @@ def centered(img):
     
     :param img: Image en niveau de gris.
     :return: Gradient centré, même taille que l'image d'entrée.
-             Le tableau retourné a une forme (nb_rows, nb_cols, 2)
+             Le tableau retourné a une forme (nb_rows * nb_cols, 2)
              où la dernière dimension contient les composantes gx et gy.
     """
     # Vérifier que l'image a une taille suffisante pour calculer le gradient centré
@@ -30,7 +30,7 @@ def centered(img):
     gy[1:-1, 1:-1] = bottom - top
     
     # Combiner les gradients dans une seule matrice
-    gradient = np.stack([gx, gy], axis=-1)
+    gradient = np.dstack((gx, gy)).reshape(-1, 2)
 
     return gradient
 
@@ -70,7 +70,7 @@ def compute_registered_gradients_sparse(img, motion, coordinates):
         new_right = np.dot(motion, np.array([x_right, y, 1.0]))
         pixel_left = interpolation.linear(new_left[0], new_left[1], img)
         pixel_right = interpolation.linear(new_right[0], new_right[1], img)
-        gx[i] = 0.5 * (pixel_right - pixel_left)
+        gx[i] = 0.5 * pixel_right - 0.5 * pixel_left
 
         # gradient vertical (gy)
         y_top = y - 1.0
@@ -79,7 +79,7 @@ def compute_registered_gradients_sparse(img, motion, coordinates):
         new_bottom = np.dot(motion, np.array([x, y_bottom, 1.0]))
         pixel_top = interpolation.linear(new_top[0], new_top[1], img)
         pixel_bottom = interpolation.linear(new_bottom[0], new_bottom[1], img)
-        gy[i] = 0.5 * (pixel_bottom - pixel_top)
+        gy[i] = 0.5 * pixel_bottom - 0.5 * pixel_top
 
     # Combiner les gradients dans une seule matrice
     gradient = np.stack([gx, gy], axis=-1)
