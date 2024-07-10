@@ -74,7 +74,7 @@ def detect_pose_transition(diff_values, start_index_a_verif, threshold=0.5, post
         post_mean = np.mean(post_transition_values) 
 
         # Vérifier si au moins percentage_stable des valeurs post-transition sont stables
-        num_stable_values = np.sum(np.abs(post_transition_values - post_mean) < 0.3) # post_threshold_factor * np.std(post_transition_values))
+        num_stable_values = np.sum(np.abs(post_transition_values - post_mean) < post_threshold_factor * np.std(post_transition_values))
         stability_percentage = num_stable_values / num_images_after
 
         # Mettre à jour le meilleur indice de transition si le pourcentage est plus élevé
@@ -104,7 +104,6 @@ def step(dataset, start_index):
 
     # Détection de la première transition de pose
     transition_index = detect_pose_transition(diff_values, start_index + 3)
-    print("Transition index dans step :", transition_index)
     
     return diff_values, transition_index
 
@@ -149,12 +148,12 @@ def main():
             num_img_ref = transition_index
         else:
             break
-        plt.figure()
-        plt.plot(diff_values, 'o-')
-        plt.title('Différences')
-        plt.xlabel('Index')
-        plt.ylabel('Différence')
-        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+        # plt.figure()
+        # plt.plot(diff_values, 'o-')
+        # plt.title('Différences')
+        # plt.xlabel('Index')
+        # plt.ylabel('Différence')
+        # plt.grid(True, which='both', linestyle='--', linewidth=0.5)
 
 
     print("Indices des changements de pose : ", ind_changes)

@@ -2,6 +2,7 @@
 import os
 import cv2
 import numpy as np
+from scipy import stats
 
 def load_images(directory):
     """
@@ -31,3 +32,47 @@ def adjust_image_mean(img, target_mean):
     # S'assurer que les valeurs restent dans l'intervalle [0, 255]
     adjusted_img = np.clip(adjusted_img, 0, 255).astype(np.uint8)
     return adjusted_img
+
+def crop_image(image, factor):
+    """
+    Recadre une image en conservant le centre.
+    input:
+        image: image à recadrer
+        factor: facteur de recadrage (0 < factor <= 1)
+    """
+    if factor <= 0 or factor > 1:
+        raise ValueError("Le facteur de recadrage doit être compris entre 0 et 1.")
+    
+    height, width = image.shape
+    new_height, new_width = int(height * factor), int(width * factor)
+    
+    start_h = (height - new_height) // 2
+    start_w = (width - new_width) // 2
+    end_h = start_h + new_height
+    end_w = start_w + new_width
+    return image[start_h:end_h, start_w:end_w]
+
+def grubbs_test_first_value_inf(data, alpha=0.05):
+    """
+    Test de Grubbs pour détecter si la première 
+    valeur est nettement inférieure aux autres dans une liste de valeurs.
+    Renvoie toujours False si la liste contient moins de 6 valeurs.
+    """
+    n = len(data)
+    if n < 6:
+        return False
+
+    # Exclure la première valeur
+    data_without_first = data[1:]
+
+    mean = np.mean(data_without_first)
+    std_dev = np.std(data_without_first)
+
+    # Calculer le score de Grubbs pour la première valeur
+    G_first = np.abs(data[0] - mean) / std_dev
+
+    # Calculer la statistique de Grubbs
+    t_dist = stats.t.ppf(1 - alpha / (2 * n), n - 2)
+    critical_value = (n - 1) / np.sqrt(n) * np.sqrt(t_dist**2 / (n - 2 + t_dist**2))
+
+    return G_first > critical_value
