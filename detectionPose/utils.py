@@ -3,19 +3,57 @@ import os
 import cv2
 import numpy as np
 from scipy import stats
+from multiprocessing import Pool
 
-def load_images(directory):
+def load_image(filepath):
     """
-    Charge toutes les images d'un répertoire dans une liste.
+    Charge une image depuis le chemin spécifié.
     """
-    images = []
-    for filename in os.listdir(directory):
-        img = cv2.imread(os.path.join(directory, filename))
-        if img is not None:
-            images.append(img)
-        else:
-            print("Erreur: n'a pas trouvé l'image", filename)
+    img = cv2.imread(filepath)
+    if img is None:
+        raise ValueError("Impossible de charger l'image", filepath)
+    else:
+        return img
+
+def load_images(directory, num_workers=4):
+    """
+    Charge toutes les images d'un répertoire dans une liste en utilisant le parallélisme.
+    """
+    filepaths = [os.path.join(directory, filename) for filename in os.listdir(directory)]
+    with Pool(num_workers) as p:
+        images = p.map(load_image, filepaths)
+
     return images
+
+
+def convert_to_gray_single(img):
+    """
+    Convertit une image en niveaux de gris.
+    """
+    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+
+def convert_to_gray(dataset, num_workers=4):
+    """
+    Convertit une liste d'images en niveaux de gris en utilisant le parallélisme.
+    """
+    with Pool(num_workers) as p:
+        dataset_gray = p.map(convert_to_gray_single, dataset)
+
+    return dataset_gray
+
+# def load_images(directory):
+#     """
+#     Charge toutes les images d'un répertoire dans une liste.
+#     """
+#     images = []
+#     for filename in os.listdir(directory):
+#         img = cv2.imread(os.path.join(directory, filename))
+#         if img is not None:
+#             images.append(img)
+#         else:
+#             print("Erreur: n'a pas trouvé l'image", filename)
+#     return images
 
 def create_I_matrix(images):
     """
