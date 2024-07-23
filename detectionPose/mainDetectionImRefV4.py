@@ -239,13 +239,20 @@ if __name__ == "__main__":
     load_time = time.time()
     print(f"{nb_images} images chargées en : {load_time - start_time:.2f} secondes")
 
+    # Trier les images par date de prise de vue
+    dataset_sorted = utils.sort_images_by_date(dataset)
+
+    # Mesure du temps d'exécution
+    sort_time = time.time()
+    print(f"Images triées par date de prise de vue en : {sort_time - load_time:.2f} secondes")
+
     # Convertir les images en niveaux de gris
     # dataset_gray = utils.convert_to_gray(dataset)
-    dataset_gray = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in dataset]
+    dataset_gray = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in dataset_sorted]
 
     # Mesure du temps d'exécution
     gray_time = time.time()
-    print(f"Images converties en niveaux de gris en : {gray_time - load_time:.2f} secondes")
+    print(f"Images converties en niveaux de gris en : {gray_time - sort_time:.2f} secondes")
 
     # Recadrer les images
     dataset_cropped = [utils.crop_image(img, CROP_FACTOR) for img in dataset_gray]
@@ -271,7 +278,8 @@ if __name__ == "__main__":
 
     # Ajuster toutes les images du dataset
     adjusted_dataset = [utils.adjust_image_mean(img, mean_reference) for img in dataset_used]
-
+    # adjusted_dataset = utils.adjust_images_mean(dataset_used)
+    # adjusted_dataset = dataset_used
     # Mesure du temps d'exécution
     adjust_time = time.time()
     print(f"Luminosité images ajustées en : {adjust_time - pyramid_time:.2f} secondes", end="\n\n")

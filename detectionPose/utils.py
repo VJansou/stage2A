@@ -4,26 +4,75 @@ import cv2
 import numpy as np
 from scipy import stats
 from multiprocessing import Pool
+import exifread
+import sys
+import contextlib
+import illumination
+from functools import partial
+
+@contextlib.contextmanager
+def suppress_all_output():
+    """
+    A context manager to suppress stdout and stderr.
+    """
+    new_stdout = os.devnull
+    new_stderr = os.devnull
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        with open(new_stdout, 'w') as devnull_out:
+            with open(new_stderr, 'w') as devnull_err:
+                sys.stdout = devnull_out
+                sys.stderr = devnull_err
+                yield
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
 
 def load_image(filepath):
     """
     Charge une image depuis le chemin spécifié.
+    Renvoie l'image et la date de prise de vue si disponible.
     """
     img = cv2.imread(filepath)
     if img is None:
         raise ValueError("Impossible de charger l'image", filepath)
-    else:
-        return img
+    
+    # Lire les métadonnées de l'image
+    with open(filepath, 'rb') as f:
+        try:
+            with suppress_all_output():
+                tags = exifread.process_file(f)
+            date_time_taken = tags.get('EXIF DateTimeOriginal')
+        except:
+            date_time_taken = None
+    
+    return img, date_time_taken
 
 def load_images(directory, num_workers=4):
     """
     Charge toutes les images d'un répertoire dans une liste en utilisant le parallélisme.
+    Renvoie une liste de tuples (image, date de prise de vue).
     """
     filepaths = [os.path.join(directory, filename) for filename in os.listdir(directory)]
     with Pool(num_workers) as p:
-        images = p.map(load_image, filepaths)
+        images_metadata = p.map(load_image, filepaths)
 
-    return images
+    return images_metadata
+
+def sort_images_by_date(images_metadata):
+    """
+    Trie les images par date de prise de vue.
+    Si une des images n'a pas de date de prise de vue, affiche un message et ne trie pas.
+    Renvoie seulement les images triées. (pas les dates de prise de vue)
+    """
+    if any([datetime_taken is None for _, datetime_taken in images_metadata]):
+        print("Certaines images n'ont pas de date de prise de vue. Impossible de trier.")
+        return [img for img, _ in images_metadata]   
+     
+    sorted_images_metadata = sorted(images_metadata, key=lambda x: x[1].values)
+    return [img for img, _ in sorted_images_metadata]
 
 
 def convert_to_gray_single(img):
@@ -70,6 +119,23 @@ def adjust_image_mean(img, target_mean):
     # S'assurer que les valeurs restent dans l'intervalle [0, 255]
     adjusted_img = np.clip(adjusted_img, 0, 255).astype(np.uint8)
     return adjusted_img
+
+def adjust_image_mean_V2(img, H_ref):
+    """
+    Ajuste l'histogramme d'une image pour correspondre à un histogramme cumulé de référence.
+    """
+    H = illumination.calculate_cumulative_histogram(img)
+    f = illumination.create_transformation_fonction(H, H_ref)
+    return f[img]
+
+def adjust_images_mean(images, num_workers=4):
+    """
+    Ajuste le niveau de gris de toutes les images pour correspondre à l'histogramme cumulé de la première image.
+    """
+    H_ref = illumination.calculate_cumulative_histogram(images[0])
+    with Pool(num_workers) as p:
+        dataset_adjusted = p.map(partial(adjust_image_mean_V2, H_ref=H_ref), images[1:])
+    return dataset_adjusted
 
 def crop_image(image, factor):
     """
