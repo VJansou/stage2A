@@ -2,9 +2,6 @@ import cv2
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-import customtkinter as ctk
-import tkinter.messagebox as messagebox
-from PIL import Image, ImageTk
 
 import utils
 from consts import *
@@ -14,12 +11,12 @@ def extract_keypoints(image):
     """
     Retourne les keypoints et leurs coordonnées pour une image donnée.
     """
-    orb = cv2.ORB.create()
-    keypoints = orb.detect(image, None)
+    sift = cv2.SIFT.create(nfeatures=100, contrastThreshold=0.03)
+    keypoints = sift.detect(image, None)
     descriptors = np.array([keypoint.pt for keypoint in keypoints], dtype=np.float32)
     return keypoints, descriptors
 
-def match_keypoints(descriptors1, descriptors2, max_distance=10.0):
+def match_keypoints(descriptors1, descriptors2, max_distance=1.0):
     """
     Retourne les correspondances entre les keypoints de deux images.
     """
@@ -30,7 +27,7 @@ def match_keypoints(descriptors1, descriptors2, max_distance=10.0):
     matches = [match for match in matches if match.distance < max_distance]
     return matches
 
-def calculate_matches(images, max_distance=10.0):
+def calculate_matches(images, max_distance=1.0):
     """
     Calcule le nombre de correspondances entre les keypoints de chaque paire d'images consécutives.
     """
@@ -53,20 +50,25 @@ def detect_view_changes_factor(matches_count, factor=0.5):
     Version avec un facteur de réduction du nombre de correspondances.
     """
     changes = []
-    for i in range(1, len(matches_count)):
+    for i in range(len(matches_count)):
         if matches_count[i] < matches_count[i-1] * factor:
             changes.append(i + 1)
     return changes
 
-def detect_view_changes_mean(matches_count, mean_factor=1.5):
+def detect_view_changes_mean(matches_count, mean_factor=1.0):
     """
     Détecte les changements de vue en fonction du nombre de correspondances entre les images.
     Version où on compare le nombre de correspondances à la moyenne.
     """
     changes = []
     mean = np.mean(matches_count)
-    for i in range(1, len(matches_count)):
-        if matches_count[i] < mean * mean_factor:
+    std = np.std(matches_count)
+    seuil = mean - std * mean_factor
+    print(f"Moyenne: {mean:.2f}")
+    print(f"Écart-type: {std:.2f}")
+    print(f"Seuil de changement de vue: {seuil:.2f}")
+    for i in range(len(matches_count)):
+        if matches_count[i] < seuil:
             changes.append(i + 1)
     return changes
 
@@ -81,11 +83,13 @@ def detect_view_changes_mediane(matches_count, median_factor=1.0):
     q3 = np.percentile(matches_count, 75)
     iqr = q3 - q1
     seuil = mediane - iqr * median_factor
+    if seuil < 0:
+        seuil = q1
     print(f"Médiane: {mediane:.2f}")
     print(f"q1: {q1:.2f}")
     print(f"q3: {q3:.2f}")
     print(f"Seuil de changement de vue: {seuil:.2f}")
-    for i in range(1, len(matches_count)):
+    for i in range(len(matches_count)):
         if matches_count[i] < seuil:
             changes.append(i + 1)
     return changes
@@ -97,8 +101,8 @@ def display_matches(img1, keypoints1, img2, keypoints2, matches):
     matched_image = cv2.drawMatches(
         img1, keypoints1,
         img2, keypoints2,
-        matches, None,
-        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        matches, None)
+        #flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
     cv2.imshow("Correspondances", matched_image)
     cv2.waitKey(0)  # Attente d'une touche pour continuer
     cv2.destroyAllWindows()
@@ -163,6 +167,7 @@ if __name__ == "__main__":
     # Détection des changements de vue
     # changes = detect_view_changes_factor(matches_count, factor=0.5)
     changes = detect_view_changes_mediane(matches_count, median_factor=1.0)
+    # changes = detect_view_changes_mean(matches_count, mean_factor=1.0)
     print()
     print("Changements de vue détectés aux images:", changes)
 
@@ -172,5 +177,8 @@ if __name__ == "__main__":
     print()
     print(f"Temps total d'exécution : {end_time - start_time:.2f} secondes")
     # Vérification manuelle des changements de vue
-    confirmed_changes = vueGraphique.user_verification_interface(dataset_sorted, changes)
-    print("Changements de vue confirmés aux images:", confirmed_changes)
+    if len(changes) > 0:
+        confirmed_changes = vueGraphique.user_verification_interface(dataset_sorted, changes)
+        print("Changements de vue confirmés aux images:", confirmed_changes)
+    else:
+        print("Aucun changement de vue détecté.")
